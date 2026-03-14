@@ -1,0 +1,42 @@
+# Self-Healing CI — Example Configuration
+#
+# Place this file as `.self-healing-ci.yaml` in the root of any repository
+# where the GitHub App is installed.
+
+version: 1
+
+retry:
+  max_attempts: 2              # Max retry attempts per workflow run
+  cooldown_seconds: 60         # Wait between retries
+
+retryable_patterns:
+  # Network-related failures (common in CI)
+  - name: "npm registry timeout"
+    pattern: "ETIMEDOUT.*registry\\.npmjs\\.org"
+    is_regex: true
+    strategy: "rerun-failed-jobs"
+
+  - name: "docker pull rate limit"
+    pattern: "toomanyrequests: You have reached your pull rate limit"
+    is_regex: false
+    strategy: "rerun-all"
+
+  - name: "go module download failure"
+    pattern: "dial tcp.*connection refused"
+    is_regex: true
+    strategy: "rerun-failed-jobs"
+
+  - name: "pip install timeout"
+    pattern: "ReadTimeoutError.*pypi\\.org"
+    is_regex: true
+    strategy: "rerun-failed-jobs"
+
+  - name: "git clone failure"
+    pattern: "fatal: unable to access"
+    is_regex: false
+    strategy: "rerun-failed-jobs"
+
+  - name: "apt-get update failure"
+    pattern: "Failed to fetch.*Could not resolve"
+    is_regex: true
+    strategy: "rerun-failed-jobs"

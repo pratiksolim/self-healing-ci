@@ -1,0 +1,19 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "retry",
+    srcs = ["engine.go"],
+    importpath = "github.com/pratiksolim/self-healing-ci/internal/retry",
+    visibility = ["//:__subpackages__"],
+    deps = ["//internal/github"],
+)
+
+go_test(
+    name = "retry_test",
+    srcs = ["engine_test.go"],
+    embed = [":retry"],
+    deps = [
+        "//internal/github",
+        "@com_github_google_go_github_v70//github",
+    ],
+)

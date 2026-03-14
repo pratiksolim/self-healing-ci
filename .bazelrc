@@ -1,0 +1,5 @@
+# Build flags
+build --incompatible_strict_action_env
+
+# Test flags
+test --test_output=errors

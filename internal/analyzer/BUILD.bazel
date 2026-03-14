@@ -1,0 +1,22 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "analyzer",
+    srcs = ["analyzer.go"],
+    importpath = "github.com/pratiksolim/self-healing-ci/internal/analyzer",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/config",
+        "//internal/github",
+    ],
+)
+
+go_test(
+    name = "analyzer_test",
+    srcs = ["analyzer_test.go"],
+    embed = [":analyzer"],
+    deps = [
+        "//internal/config",
+        "//internal/github",
+    ],
+)
