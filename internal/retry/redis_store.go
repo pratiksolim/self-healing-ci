@@ -34,7 +34,7 @@ if count >= maxAttempts then
 end
 
 local newVal = redis.call("INCR", KEYS[1])
-if count == 0 and ttl > 0 then
+if ttl > 0 then
 	redis.call("EXPIRE", KEYS[1], ttl)
 end
 

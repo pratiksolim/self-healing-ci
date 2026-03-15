@@ -60,7 +60,7 @@ func (m *MemoryStore) TryAttempt(_ context.Context, key string, maxAttempts int,
 	}
 
 	entry.count++
-	if !exists && ttl > 0 {
+	if ttl > 0 {
 		entry.expiresAt = now.Add(ttl)
 	}
 
