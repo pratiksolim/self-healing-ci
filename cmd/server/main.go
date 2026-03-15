@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -68,6 +69,21 @@ func main() {
 	var store retry.Store
 	if addr := os.Getenv("REDIS_ADDR"); addr != "" {
 		rdb := redis.NewClient(&redis.Options{Addr: addr})
+
+		// Validate Redis connectivity with a short timeout and fail fast if unavailable.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := rdb.Ping(ctx).Err(); err != nil {
+			log.Fatalf("failed to connect to Redis at %s: %v", addr, err)
+		}
+
+		// Ensure the Redis client is cleanly closed on shutdown.
+		defer func() {
+			if err := rdb.Close(); err != nil {
+				log.Printf("error closing Redis client: %v", err)
+			}
+		}()
+
 		store = retry.NewRedisStore(rdb)
 		log.Printf("using Redis store at %s", addr)
 	} else {
