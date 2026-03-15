@@ -23,17 +23,21 @@ const configFilePath = ".self-healing-ci.yaml"
 
 // Handler processes GitHub webhook events for workflow_run completions.
 type Handler struct {
-	auth          *ghclient.AppAuth
-	retryEngine   *retry.Engine
-	webhookSecret string
+	auth            *ghclient.AppAuth
+	retryEngine     *retry.Engine
+	webhookSecret   string
+	slackToken      string
+	slackChannelID  string
 }
 
 // NewHandler creates a new webhook Handler with a shared retry engine.
-func NewHandler(auth *ghclient.AppAuth, retryEngine *retry.Engine, webhookSecret string) *Handler {
+func NewHandler(auth *ghclient.AppAuth, retryEngine *retry.Engine, webhookSecret, slackToken, slackChannelID string) *Handler {
 	return &Handler{
-		auth:          auth,
-		retryEngine:   retryEngine,
-		webhookSecret: webhookSecret,
+		auth:            auth,
+		retryEngine:     retryEngine,
+		webhookSecret:   webhookSecret,
+		slackToken:      slackToken,
+		slackChannelID:  slackChannelID,
 	}
 }
 
@@ -138,8 +142,8 @@ func (h *Handler) processFailedRun(event workflowRunEvent) {
 
 	log.Printf("[webhook] pattern %q matched in job %q: %s", match.PatternName, match.JobName, match.MatchedLine)
 
-	// Build a stable key for retry tracking (survives across re-runs).
-	attemptKey := retry.AttemptKey(owner, repo, event.WorkflowRun.Name, event.WorkflowRun.HeadBranch)
+	// Build a stable key for retry tracking (survives across re-runs) but isolate by run trigger.
+	attemptKey := retry.AttemptKey(owner, repo, event.WorkflowRun.Name, event.WorkflowRun.HeadBranch, event.WorkflowRun.ID)
 
 	// Build the retry function using the per-installation client.
 	retryFn := func(ctx context.Context, owner, repo string, runID int64, strategy string) error {
@@ -165,6 +169,11 @@ func (h *Handler) processFailedRun(event workflowRunEvent) {
 	}
 	if !allowed {
 		log.Printf("[webhook] retry budget exhausted for %s (max %d)", attemptKey, cfg.Retry.MaxAttempts)
+		// Send Slack alert and clear key so future identical triggers don't immediately fail.
+		sendSlackAlert(ctx, h.slackToken, h.slackChannelID, owner, repo, event.WorkflowRun.ID, match.MatchedLine)
+		if clearErr := h.retryEngine.Clear(ctx, attemptKey); clearErr != nil {
+			log.Printf("[webhook] failed to clear exhausted key %s: %v", attemptKey, clearErr)
+		}
 		return
 	}
 

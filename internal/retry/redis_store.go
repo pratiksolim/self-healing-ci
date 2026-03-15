@@ -78,3 +78,8 @@ func (r *RedisStore) Get(ctx context.Context, key string) (int, error) {
 	}
 	return val, nil
 }
+
+// Clear removes a key from Redis.
+func (r *RedisStore) Clear(ctx context.Context, key string) error {
+	return r.client.Del(ctx, key).Err()
+}

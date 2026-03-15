@@ -8,7 +8,7 @@ import (
 
 func TestTryExecute_WithinBudget(t *testing.T) {
 	engine := NewEngine(NewMemoryStore(), 1*time.Hour)
-	key := AttemptKey("owner", "repo", "ci", "main")
+	key := AttemptKey("owner", "repo", "ci", "main", 42)
 	ctx := context.Background()
 
 	called := false
@@ -36,7 +36,7 @@ func TestTryExecute_WithinBudget(t *testing.T) {
 
 func TestTryExecute_ExhaustedBudget(t *testing.T) {
 	engine := NewEngine(NewMemoryStore(), 1*time.Hour)
-	key := AttemptKey("owner", "repo", "ci", "main")
+	key := AttemptKey("owner", "repo", "ci", "main", 42)
 	ctx := context.Background()
 
 	retryFn := func(ctx context.Context, owner, repo string, runID int64, strategy string) error {
@@ -73,8 +73,8 @@ func TestTryExecute_ExhaustedBudget(t *testing.T) {
 }
 
 func TestAttemptKey_DifferentBranches(t *testing.T) {
-	key1 := AttemptKey("owner", "repo", "ci", "main")
-	key2 := AttemptKey("owner", "repo", "ci", "develop")
+	key1 := AttemptKey("owner", "repo", "ci", "main", 42)
+	key2 := AttemptKey("owner", "repo", "ci", "develop", 42)
 
 	if key1 == key2 {
 		t.Error("expected different keys for different branches")
@@ -82,8 +82,8 @@ func TestAttemptKey_DifferentBranches(t *testing.T) {
 }
 
 func TestAttemptKey_DifferentWorkflows(t *testing.T) {
-	key1 := AttemptKey("owner", "repo", "ci", "main")
-	key2 := AttemptKey("owner", "repo", "deploy", "main")
+	key1 := AttemptKey("owner", "repo", "ci", "main", 42)
+	key2 := AttemptKey("owner", "repo", "deploy", "main", 42)
 
 	if key1 == key2 {
 		t.Error("expected different keys for different workflows")

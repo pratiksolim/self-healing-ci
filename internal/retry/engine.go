@@ -32,8 +32,8 @@ func NewEngine(store Store, cooldown time.Duration) *Engine {
 }
 
 // AttemptKey builds a stable key for tracking retries across workflow re-runs.
-func AttemptKey(owner, repo, workflowName, branch string) string {
-	return fmt.Sprintf("%s/%s:%s:%s", owner, repo, workflowName, branch)
+func AttemptKey(owner, repo, workflowName, branch string, runID int64) string {
+	return fmt.Sprintf("%s/%s:%s:%s:%d", owner, repo, workflowName, branch, runID)
 }
 
 // TryExecute records an attempt using atomic budget enforcement.
@@ -71,4 +71,9 @@ func (e *Engine) TryExecute(
 // CurrentAttempts returns the current attempt count for a key.
 func (e *Engine) CurrentAttempts(ctx context.Context, key string) (int, error) {
 	return e.store.Get(ctx, key)
+}
+
+// Clear clears the attempt tracking for a key, typically called when budget is exhausted.
+func (e *Engine) Clear(ctx context.Context, key string) error {
+	return e.store.Clear(ctx, key)
 }

@@ -17,6 +17,9 @@ type Store interface {
 
 	// Get returns the current attempt count for a key. Returns 0 if not found.
 	Get(ctx context.Context, key string) (int, error)
+
+	// Clear removes the retry tracking for a given key.
+	Clear(ctx context.Context, key string) error
 }
 
 // MemoryStore is an in-memory Store backed by a map. Useful for tests and
@@ -77,4 +80,12 @@ func (m *MemoryStore) Get(_ context.Context, key string) (int, error) {
 	}
 
 	return entry.count, nil
+}
+
+// Clear removes a key from the tracking map.
+func (m *MemoryStore) Clear(_ context.Context, key string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.attempts, key)
+	return nil
 }

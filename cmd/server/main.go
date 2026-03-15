@@ -32,6 +32,8 @@ func main() {
 	appIDStr := os.Getenv("GITHUB_APP_ID")
 	privateKeyPath := os.Getenv("GITHUB_PRIVATE_KEY_PATH")
 	webhookSecret := os.Getenv("WEBHOOK_SECRET")
+	slackToken := os.Getenv("SLACK_BOT_TOKEN")
+	slackChannelID := os.Getenv("SLACK_CHANNEL_ID")
 	port := os.Getenv("PORT")
 
 	if appIDStr == "" || privateKeyPath == "" {
@@ -92,7 +94,7 @@ func main() {
 	}
 
 	retryEngine := retry.NewEngine(store, cooldown)
-	handler := webhook.NewHandler(auth, retryEngine, webhookSecret)
+	handler := webhook.NewHandler(auth, retryEngine, webhookSecret, slackToken, slackChannelID)
 
 	mux := http.NewServeMux()
 	mux.Handle("/webhook", handler)

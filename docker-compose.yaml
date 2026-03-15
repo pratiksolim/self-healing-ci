@@ -17,8 +17,10 @@ services:
     environment:
       REDIS_ADDR: redis:6379
       GITHUB_PRIVATE_KEY_PATH: /app/private-key.pem
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+      SLACK_CHANNEL_ID: ${SLACK_CHANNEL_ID}
     depends_on:
       redis:
         condition: service_healthy
     volumes:
-      - ./private-key.pem:/app/private-key.pem:ro
+      - ./self-healing-ci.2026-03-14.private-key.pem:/app/private-key.pem:ro

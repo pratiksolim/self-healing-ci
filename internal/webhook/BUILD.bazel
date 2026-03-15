@@ -2,7 +2,10 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "webhook",
-    srcs = ["handler.go"],
+    srcs = [
+        "handler.go",
+        "slack.go",
+    ],
     importpath = "github.com/pratiksolim/self-healing-ci/internal/webhook",
     visibility = ["//:__subpackages__"],
     deps = [
