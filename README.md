@@ -1,6 +1,10 @@
 # Self-Healing CI
 
-A GitHub App that automatically retries failed GitHub Actions workflows when failures match user-configured patterns, such as network timeouts, registry rate limits, or transient connection errors.
+A GitHub App that automatically retries failed GitHub Actions workflows when failures match user-configured patterns — such as network timeouts, registry rate limits, or transient connection errors.
+
+## Demo
+
+<video src="https://github.com/user-attachments/assets/692963ae-70e0-4326-9b71-a622c37133cb" controls="controls" muted="muted" style="max-width: 100%; border-radius: 8px;"></video>
 
 ## 1. How It Works
 
