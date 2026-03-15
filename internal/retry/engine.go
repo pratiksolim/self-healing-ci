@@ -5,56 +5,75 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"sync"
-
-	ghclient "github.com/pratiksolim/self-healing-ci/internal/github"
+	"time"
 )
 
+// RetryFunc is a function that executes the actual retry API call.
+// This decouples the engine from the GitHub client, since the client
+// is created per-installation and varies per webhook event.
+type RetryFunc func(ctx context.Context, owner, repo string, runID int64, strategy string) error
+
 // Engine manages retry decisions and execution.
+// It tracks attempts by a stable key (workflow name + branch) rather than
+// by run ID, because retries create new runs with different IDs.
 type Engine struct {
-	client *ghclient.Client
-
-	mu       sync.Mutex
-	attempts map[int64]int // runID → current attempt count
+	store    Store
+	cooldown time.Duration
 }
 
-// NewEngine creates a new retry Engine.
-func NewEngine(client *ghclient.Client) *Engine {
+// NewEngine creates a new retry Engine backed by the given Store.
+// The cooldown duration controls how long retry counters live before
+// auto-expiring (used by stores that support TTL, e.g. Redis).
+func NewEngine(store Store, cooldown time.Duration) *Engine {
 	return &Engine{
-		client:   client,
-		attempts: make(map[int64]int),
+		store:    store,
+		cooldown: cooldown,
 	}
 }
 
-// ShouldRetry checks whether the given run is still within its retry budget.
-func (e *Engine) ShouldRetry(runID int64, maxAttempts int) bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.attempts[runID] < maxAttempts
+// AttemptKey builds a stable key for tracking retries across workflow re-runs.
+func AttemptKey(owner, repo, workflowName, branch string, runID int64) string {
+	return fmt.Sprintf("%s/%s:%s:%s:%d", owner, repo, workflowName, branch, runID)
 }
 
-// Execute performs the retry using the specified strategy and increments the attempt counter.
-func (e *Engine) Execute(ctx context.Context, owner, repo string, runID int64, strategy string) error {
-	e.mu.Lock()
-	e.attempts[runID]++
-	attempt := e.attempts[runID]
-	e.mu.Unlock()
-
-	log.Printf("[retry] executing %s for %s/%s run %d (attempt %d)", strategy, owner, repo, runID, attempt)
-
-	switch strategy {
-	case "rerun-failed-jobs":
-		return e.client.RerunFailedJobs(ctx, owner, repo, runID)
-	case "rerun-all":
-		return e.client.RerunWorkflow(ctx, owner, repo, runID)
-	default:
-		return fmt.Errorf("unknown retry strategy: %s", strategy)
+// TryExecute records an attempt using atomic budget enforcement.
+// If the retry budget allows another attempt, it increments the attempt
+// counter, records a log, and then calls the provided retry function.
+// It returns true if the budget allowed the attempt regardless of whether
+// the retryFn succeeded or failed.
+func (e *Engine) TryExecute(
+	ctx context.Context,
+	key string,
+	maxAttempts int,
+	retryFn RetryFunc,
+	owner, repo string,
+	runID int64,
+	strategy string,
+) (bool, error) {
+	allowed, currentAttempt, err := e.store.TryAttempt(ctx, key, maxAttempts, e.cooldown)
+	if err != nil {
+		return false, fmt.Errorf("failed to check/record attempt: %w", err)
 	}
+
+	if !allowed {
+		return false, nil
+	}
+
+	log.Printf("[retry] executing %s for %s run %d (attempt %d)", strategy, key, runID, currentAttempt)
+	
+	if err := retryFn(ctx, owner, repo, runID, strategy); err != nil {
+		return true, fmt.Errorf("retry execution failed: %w", err)
+	}
+	
+	return true, nil
 }
 
-// CurrentAttempts returns the current attempt count for a run (used in tests).
-func (e *Engine) CurrentAttempts(runID int64) int {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.attempts[runID]
+// CurrentAttempts returns the current attempt count for a key.
+func (e *Engine) CurrentAttempts(ctx context.Context, key string) (int, error) {
+	return e.store.Get(ctx, key)
+}
+
+// Clear clears the attempt tracking for a key, typically called when budget is exhausted.
+func (e *Engine) Clear(ctx context.Context, key string) error {
+	return e.store.Clear(ctx, key)
 }

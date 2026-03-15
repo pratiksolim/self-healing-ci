@@ -2,20 +2,38 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"strconv"
+	"time"
+
+	"github.com/joho/godotenv"
+	"github.com/redis/go-redis/v9"
 
 	ghclient "github.com/pratiksolim/self-healing-ci/internal/github"
+	"github.com/pratiksolim/self-healing-ci/internal/retry"
 	"github.com/pratiksolim/self-healing-ci/internal/webhook"
 )
 
 func main() {
+	// Load .env file if present (not required — env vars work too).
+	if err := godotenv.Load(); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			log.Println("No .env file found, reading from environment")
+		} else {
+			log.Printf("Warning: error loading .env file: %v", err)
+		}
+	}
+
 	appIDStr := os.Getenv("GITHUB_APP_ID")
 	privateKeyPath := os.Getenv("GITHUB_PRIVATE_KEY_PATH")
 	webhookSecret := os.Getenv("WEBHOOK_SECRET")
+	slackToken := os.Getenv("SLACK_BOT_TOKEN")
+	slackChannelID := os.Getenv("SLACK_CHANNEL_ID")
 	port := os.Getenv("PORT")
 
 	if appIDStr == "" || privateKeyPath == "" {
@@ -36,7 +54,47 @@ func main() {
 		log.Fatalf("failed to initialize GitHub App auth: %v", err)
 	}
 
-	handler := webhook.NewHandler(auth, webhookSecret)
+	// Configure retry cooldown (how long before counters auto-expire).
+	cooldownSeconds := 3600 // default: 1 hour
+	if v := os.Getenv("RETRY_COOLDOWN_SECONDS"); v != "" {
+		if parsed, err := strconv.Atoi(v); err != nil {
+			log.Printf("invalid RETRY_COOLDOWN_SECONDS %q: %v. Defaulting to 3600", v, err)
+		} else if parsed <= 0 {
+			log.Printf("RETRY_COOLDOWN_SECONDS must be > 0. Defaulting to 3600")
+		} else {
+			cooldownSeconds = parsed
+		}
+	}
+	cooldown := time.Duration(cooldownSeconds) * time.Second
+
+	// Choose store backend: Redis if REDIS_ADDR is set, else in-memory.
+	var store retry.Store
+	if addr := os.Getenv("REDIS_ADDR"); addr != "" {
+		rdb := redis.NewClient(&redis.Options{Addr: addr})
+
+		// Validate Redis connectivity with a short timeout and fail fast if unavailable.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := rdb.Ping(ctx).Err(); err != nil {
+			log.Fatalf("failed to connect to Redis at %s: %v", addr, err)
+		}
+
+		// Ensure the Redis client is cleanly closed on shutdown.
+		defer func() {
+			if err := rdb.Close(); err != nil {
+				log.Printf("error closing Redis client: %v", err)
+			}
+		}()
+
+		store = retry.NewRedisStore(rdb)
+		log.Printf("using Redis store at %s", addr)
+	} else {
+		store = retry.NewMemoryStore()
+		log.Println("REDIS_ADDR not set, using in-memory store (state will be lost on restart)")
+	}
+
+	retryEngine := retry.NewEngine(store, cooldown)
+	handler := webhook.NewHandler(auth, retryEngine, webhookSecret, slackToken, slackChannelID)
 
 	mux := http.NewServeMux()
 	mux.Handle("/webhook", handler)

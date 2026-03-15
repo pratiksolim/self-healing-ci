@@ -23,16 +23,21 @@ const configFilePath = ".self-healing-ci.yaml"
 
 // Handler processes GitHub webhook events for workflow_run completions.
 type Handler struct {
-	auth          *ghclient.AppAuth
-	retryEngine   *retry.Engine
-	webhookSecret string
+	auth            *ghclient.AppAuth
+	retryEngine     *retry.Engine
+	webhookSecret   string
+	slackToken      string
+	slackChannelID  string
 }
 
-// NewHandler creates a new webhook Handler.
-func NewHandler(auth *ghclient.AppAuth, webhookSecret string) *Handler {
+// NewHandler creates a new webhook Handler with a shared retry engine.
+func NewHandler(auth *ghclient.AppAuth, retryEngine *retry.Engine, webhookSecret, slackToken, slackChannelID string) *Handler {
 	return &Handler{
-		auth:          auth,
-		webhookSecret: webhookSecret,
+		auth:            auth,
+		retryEngine:     retryEngine,
+		webhookSecret:   webhookSecret,
+		slackToken:      slackToken,
+		slackChannelID:  slackChannelID,
 	}
 }
 
@@ -80,7 +85,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[webhook] processing failed workflow run %d for %s", event.WorkflowRun.ID, event.Repository.FullName)
+	log.Printf("[webhook] processing failed workflow run %d (%s) for %s on branch %s",
+		event.WorkflowRun.ID, event.WorkflowRun.Name, event.Repository.FullName, event.WorkflowRun.HeadBranch)
 
 	// Process asynchronously to avoid holding the webhook response.
 	go h.processFailedRun(event)
@@ -136,18 +142,38 @@ func (h *Handler) processFailedRun(event workflowRunEvent) {
 
 	log.Printf("[webhook] pattern %q matched in job %q: %s", match.PatternName, match.JobName, match.MatchedLine)
 
-	// Create a retry engine for this client.
-	engine := retry.NewEngine(client)
+	// Build a stable key for retry tracking (survives across re-runs) but isolate by run trigger.
+	attemptKey := retry.AttemptKey(owner, repo, event.WorkflowRun.Name, event.WorkflowRun.HeadBranch, event.WorkflowRun.ID)
 
-	// Check retry budget.
-	if !engine.ShouldRetry(event.WorkflowRun.ID, cfg.Retry.MaxAttempts) {
-		log.Printf("[webhook] retry budget exhausted for run %d", event.WorkflowRun.ID)
-		return
+	// Build the retry function using the per-installation client.
+	retryFn := func(ctx context.Context, owner, repo string, runID int64, strategy string) error {
+		switch strategy {
+		case "rerun-failed-jobs":
+			return client.RerunFailedJobs(ctx, owner, repo, runID)
+		case "rerun-all":
+			return client.RerunWorkflow(ctx, owner, repo, runID)
+		default:
+			return fmt.Errorf("unknown retry strategy: %s", strategy)
+		}
 	}
 
-	// Execute retry.
-	if err := engine.Execute(ctx, owner, repo, event.WorkflowRun.ID, match.Strategy); err != nil {
-		log.Printf("[webhook] retry failed: %v", err)
+	// Try checking budget and executing the retry atomically.
+	allowed, err := h.retryEngine.TryExecute(
+		ctx, attemptKey, cfg.Retry.MaxAttempts,
+		retryFn, owner, repo, event.WorkflowRun.ID, match.Strategy,
+	)
+	if err != nil {
+		log.Printf("[webhook] error during retry execution for %s (allowed=%t): %v", attemptKey, allowed, err)
+		// Log the error and stop processing; no success message will be printed for this run.
+		return
+	}
+	if !allowed {
+		log.Printf("[webhook] retry budget exhausted for %s (max %d)", attemptKey, cfg.Retry.MaxAttempts)
+		// Send Slack alert and clear key so future identical triggers don't immediately fail.
+		sendSlackAlert(ctx, h.slackToken, h.slackChannelID, owner, repo, event.WorkflowRun.ID, match.MatchedLine)
+		if clearErr := h.retryEngine.Clear(ctx, attemptKey); clearErr != nil {
+			log.Printf("[webhook] failed to clear exhausted key %s: %v", attemptKey, clearErr)
+		}
 		return
 	}
 
@@ -181,9 +207,10 @@ func parseFullName(fullName string) (string, string, error) {
 
 // workflowRunEvent represents the relevant fields from a workflow_run webhook event.
 type workflowRunEvent struct {
-	Action       string `json:"action"`
-	WorkflowRun  struct {
+	Action      string `json:"action"`
+	WorkflowRun struct {
 		ID         int64  `json:"id"`
+		Name       string `json:"name"`
 		Conclusion string `json:"conclusion"`
 		HeadBranch string `json:"head_branch"`
 	} `json:"workflow_run"`

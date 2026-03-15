@@ -8,11 +8,13 @@ bazel_dep(name = "gazelle", version = "0.47.0")
 
 go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
 go_deps.from_file(go_mod = "//:go.mod")
-
 use_repo(
     go_deps,
-    "com_github_google_go_github_v70",
+    "com_github_alicebob_miniredis_v2",
     "com_github_bradleyfalzon_ghinstallation_v2",
+    "com_github_google_go_github_v70",
+    "com_github_joho_godotenv",
+    "com_github_redis_go_redis_v9",
     "in_gopkg_yaml_v3",
 )
 

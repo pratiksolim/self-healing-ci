@@ -7,7 +7,10 @@ go_library(
     visibility = ["//visibility:private"],
     deps = [
         "//internal/github",
+        "//internal/retry",
         "//internal/webhook",
+        "@com_github_joho_godotenv//:godotenv",
+        "@com_github_redis_go_redis_v9//:go-redis",
     ],
 )
 
