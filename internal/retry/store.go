@@ -20,7 +20,7 @@ type Store interface {
 }
 
 // MemoryStore is an in-memory Store backed by a map. Useful for tests and
-// local development. It supports TTL via periodic or access-time pruning.
+// local development. It supports TTL via access-time pruning on TryAttempt/Get.
 type MemoryStore struct {
 	mu       sync.Mutex
 	attempts map[string]storeEntry
