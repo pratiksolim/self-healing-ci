@@ -159,9 +159,8 @@ func (h *Handler) processFailedRun(event workflowRunEvent) {
 		retryFn, owner, repo, event.WorkflowRun.ID, match.Strategy,
 	)
 	if err != nil {
-		log.Printf("[webhook] error during retry execution for %s: %v", attemptKey, err)
-		// If it was allowed but failed during execution, we don't return early here
-		// since we want to print success if it succeeded, but we just return to stop.
+		log.Printf("[webhook] error during retry execution for %s (allowed=%t): %v", attemptKey, allowed, err)
+		// Log the error and stop processing; no success message will be printed for this run.
 		return
 	}
 	if !allowed {
