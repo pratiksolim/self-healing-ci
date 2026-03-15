@@ -17,4 +17,5 @@ go_test(
     name = "webhook_test",
     srcs = ["handler_test.go"],
     embed = [":webhook"],
+    deps = ["//internal/retry"],
 )

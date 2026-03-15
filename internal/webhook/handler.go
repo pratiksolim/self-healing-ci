@@ -28,10 +28,11 @@ type Handler struct {
 	webhookSecret string
 }
 
-// NewHandler creates a new webhook Handler.
-func NewHandler(auth *ghclient.AppAuth, webhookSecret string) *Handler {
+// NewHandler creates a new webhook Handler with a shared retry engine.
+func NewHandler(auth *ghclient.AppAuth, retryEngine *retry.Engine, webhookSecret string) *Handler {
 	return &Handler{
 		auth:          auth,
+		retryEngine:   retryEngine,
 		webhookSecret: webhookSecret,
 	}
 }
@@ -80,7 +81,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[webhook] processing failed workflow run %d for %s", event.WorkflowRun.ID, event.Repository.FullName)
+	log.Printf("[webhook] processing failed workflow run %d (%s) for %s on branch %s",
+		event.WorkflowRun.ID, event.WorkflowRun.Name, event.Repository.FullName, event.WorkflowRun.HeadBranch)
 
 	// Process asynchronously to avoid holding the webhook response.
 	go h.processFailedRun(event)
@@ -136,17 +138,34 @@ func (h *Handler) processFailedRun(event workflowRunEvent) {
 
 	log.Printf("[webhook] pattern %q matched in job %q: %s", match.PatternName, match.JobName, match.MatchedLine)
 
-	// Create a retry engine for this client.
-	engine := retry.NewEngine(client)
+	// Build a stable key for retry tracking (survives across re-runs).
+	attemptKey := retry.AttemptKey(owner, repo, event.WorkflowRun.Name, event.WorkflowRun.HeadBranch)
 
 	// Check retry budget.
-	if !engine.ShouldRetry(event.WorkflowRun.ID, cfg.Retry.MaxAttempts) {
-		log.Printf("[webhook] retry budget exhausted for run %d", event.WorkflowRun.ID)
+	allowed, err := h.retryEngine.ShouldRetry(ctx, attemptKey, cfg.Retry.MaxAttempts)
+	if err != nil {
+		log.Printf("[webhook] error checking retry budget: %v", err)
+		return
+	}
+	if !allowed {
+		log.Printf("[webhook] retry budget exhausted for %s (max %d)", attemptKey, cfg.Retry.MaxAttempts)
 		return
 	}
 
+	// Build the retry function using the per-installation client.
+	retryFn := func(ctx context.Context, owner, repo string, runID int64, strategy string) error {
+		switch strategy {
+		case "rerun-failed-jobs":
+			return client.RerunFailedJobs(ctx, owner, repo, runID)
+		case "rerun-all":
+			return client.RerunWorkflow(ctx, owner, repo, runID)
+		default:
+			return fmt.Errorf("unknown retry strategy: %s", strategy)
+		}
+	}
+
 	// Execute retry.
-	if err := engine.Execute(ctx, owner, repo, event.WorkflowRun.ID, match.Strategy); err != nil {
+	if err := h.retryEngine.Execute(ctx, attemptKey, retryFn, owner, repo, event.WorkflowRun.ID, match.Strategy); err != nil {
 		log.Printf("[webhook] retry failed: %v", err)
 		return
 	}
@@ -181,9 +200,10 @@ func parseFullName(fullName string) (string, string, error) {
 
 // workflowRunEvent represents the relevant fields from a workflow_run webhook event.
 type workflowRunEvent struct {
-	Action       string `json:"action"`
-	WorkflowRun  struct {
+	Action      string `json:"action"`
+	WorkflowRun struct {
 		ID         int64  `json:"id"`
+		Name       string `json:"name"`
 		Conclusion string `json:"conclusion"`
 		HeadBranch string `json:"head_branch"`
 	} `json:"workflow_run"`

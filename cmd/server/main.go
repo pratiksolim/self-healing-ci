@@ -7,12 +7,22 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"time"
+
+	"github.com/joho/godotenv"
+	"github.com/redis/go-redis/v9"
 
 	ghclient "github.com/pratiksolim/self-healing-ci/internal/github"
+	"github.com/pratiksolim/self-healing-ci/internal/retry"
 	"github.com/pratiksolim/self-healing-ci/internal/webhook"
 )
 
 func main() {
+	// Load .env file if present (not required — env vars work too).
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found, reading from environment")
+	}
+
 	appIDStr := os.Getenv("GITHUB_APP_ID")
 	privateKeyPath := os.Getenv("GITHUB_PRIVATE_KEY_PATH")
 	webhookSecret := os.Getenv("WEBHOOK_SECRET")
@@ -36,7 +46,29 @@ func main() {
 		log.Fatalf("failed to initialize GitHub App auth: %v", err)
 	}
 
-	handler := webhook.NewHandler(auth, webhookSecret)
+	// Configure retry cooldown (how long before counters auto-expire).
+	cooldownSeconds := 3600 // default: 1 hour
+	if v := os.Getenv("RETRY_COOLDOWN_SECONDS"); v != "" {
+		cooldownSeconds, err = strconv.Atoi(v)
+		if err != nil {
+			log.Fatalf("invalid RETRY_COOLDOWN_SECONDS: %v", err)
+		}
+	}
+	cooldown := time.Duration(cooldownSeconds) * time.Second
+
+	// Choose store backend: Redis if REDIS_ADDR is set, else in-memory.
+	var store retry.Store
+	if addr := os.Getenv("REDIS_ADDR"); addr != "" {
+		rdb := redis.NewClient(&redis.Options{Addr: addr})
+		store = retry.NewRedisStore(rdb)
+		log.Printf("using Redis store at %s", addr)
+	} else {
+		store = retry.NewMemoryStore()
+		log.Println("REDIS_ADDR not set, using in-memory store (state will be lost on restart)")
+	}
+
+	retryEngine := retry.NewEngine(store, cooldown)
+	handler := webhook.NewHandler(auth, retryEngine, webhookSecret)
 
 	mux := http.NewServeMux()
 	mux.Handle("/webhook", handler)

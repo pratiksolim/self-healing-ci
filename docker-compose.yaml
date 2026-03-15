@@ -1,0 +1,24 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  server:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file: .env
+    environment:
+      REDIS_ADDR: redis:6379
+      GITHUB_PRIVATE_KEY_PATH: /app/private-key.pem
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./self-healing-ci.2026-03-14.private-key.pem:/app/private-key.pem:ro

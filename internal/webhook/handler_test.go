@@ -10,6 +10,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/pratiksolim/self-healing-ci/internal/retry"
 )
 
 func TestVerifySignature_Valid(t *testing.T) {
@@ -45,7 +48,7 @@ func TestVerifySignature_MissingPrefix(t *testing.T) {
 }
 
 func TestServeHTTP_WrongMethod(t *testing.T) {
-	h := NewHandler(nil, "secret")
+	h := NewHandler(nil, retry.NewEngine(retry.NewMemoryStore(), 1*time.Hour), "secret")
 	req := httptest.NewRequest(http.MethodGet, "/webhook", nil)
 	rec := httptest.NewRecorder()
 
@@ -57,7 +60,7 @@ func TestServeHTTP_WrongMethod(t *testing.T) {
 }
 
 func TestServeHTTP_IgnoredEvent(t *testing.T) {
-	h := NewHandler(nil, "")
+	h := NewHandler(nil, retry.NewEngine(retry.NewMemoryStore(), 1*time.Hour), "")
 	body := `{"action":"opened"}`
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(body))
 	req.Header.Set("X-GitHub-Event", "push")
@@ -71,7 +74,7 @@ func TestServeHTTP_IgnoredEvent(t *testing.T) {
 }
 
 func TestServeHTTP_SkipNonFailure(t *testing.T) {
-	h := NewHandler(nil, "")
+	h := NewHandler(nil, retry.NewEngine(retry.NewMemoryStore(), 1*time.Hour), "")
 	event := workflowRunEvent{Action: "completed"}
 	event.WorkflowRun.Conclusion = "success"
 	body, _ := json.Marshal(event)
