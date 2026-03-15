@@ -4,7 +4,7 @@ A GitHub App that automatically retries failed GitHub Actions workflows when fai
 
 ## Demo
 
-![Demo](https://ik.imagekit.io/pratiksolim/self-healing-ci/self-healing-ci-gha_TYZWi5vsV.gif)
+![Demo](https://ik.imagekit.io/pratiksolim/self-healing-ci/self-healing-ci-gha_TYZWi5vsV.gif?updatedAt=1773592809967)
 
 ## 1. How It Works
 
