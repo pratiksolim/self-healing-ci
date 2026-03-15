@@ -3,6 +3,7 @@ package retry
 import (
 	"context"
 	"errors"
+	"math"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -42,7 +43,10 @@ return {1, newVal}
 
 // TryAttempt atomically uses a Lua script to check budget, increment, and set TTL.
 func (r *RedisStore) TryAttempt(ctx context.Context, key string, maxAttempts int, ttl time.Duration) (bool, int, error) {
-	ttlSeconds := int(ttl.Seconds())
+	ttlSeconds := 0
+	if ttl > 0 {
+		ttlSeconds = int(math.Ceil(ttl.Seconds()))
+	}
 	res, err := tryAttemptScript.Run(ctx, r.client, []string{key}, maxAttempts, ttlSeconds).Result()
 	if err != nil {
 		return false, 0, err
