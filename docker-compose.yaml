@@ -21,4 +21,4 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - ./self-healing-ci.2026-03-14.private-key.pem:/app/private-key.pem:ro
+      - ./private-key.pem:/app/private-key.pem:ro

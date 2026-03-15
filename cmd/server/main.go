@@ -2,6 +2,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -20,7 +21,11 @@ import (
 func main() {
 	// Load .env file if present (not required — env vars work too).
 	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found, reading from environment")
+		if errors.Is(err, os.ErrNotExist) {
+			log.Println("No .env file found, reading from environment")
+		} else {
+			log.Printf("Warning: error loading .env file: %v", err)
+		}
 	}
 
 	appIDStr := os.Getenv("GITHUB_APP_ID")
@@ -49,9 +54,12 @@ func main() {
 	// Configure retry cooldown (how long before counters auto-expire).
 	cooldownSeconds := 3600 // default: 1 hour
 	if v := os.Getenv("RETRY_COOLDOWN_SECONDS"); v != "" {
-		cooldownSeconds, err = strconv.Atoi(v)
-		if err != nil {
-			log.Fatalf("invalid RETRY_COOLDOWN_SECONDS: %v", err)
+		if parsed, err := strconv.Atoi(v); err != nil {
+			log.Printf("invalid RETRY_COOLDOWN_SECONDS %q: %v. Defaulting to 3600", v, err)
+		} else if parsed <= 0 {
+			log.Printf("RETRY_COOLDOWN_SECONDS must be > 0. Defaulting to 3600")
+		} else {
+			cooldownSeconds = parsed
 		}
 	}
 	cooldown := time.Duration(cooldownSeconds) * time.Second

@@ -36,28 +36,36 @@ func AttemptKey(owner, repo, workflowName, branch string) string {
 	return fmt.Sprintf("%s/%s:%s:%s", owner, repo, workflowName, branch)
 }
 
-// ShouldRetry checks whether the given workflow+branch is still within its retry budget.
-func (e *Engine) ShouldRetry(ctx context.Context, key string, maxAttempts int) (bool, error) {
-	count, err := e.store.Get(ctx, key)
+// TryExecute records an attempt using atomic budget enforcement.
+// If the retry budget allows another attempt, it increments the attempt
+// counter, records a log, and then calls the provided retry function.
+// It returns true if the budget allowed the attempt regardless of whether
+// the retryFn succeeded or failed.
+func (e *Engine) TryExecute(
+	ctx context.Context,
+	key string,
+	maxAttempts int,
+	retryFn RetryFunc,
+	owner, repo string,
+	runID int64,
+	strategy string,
+) (bool, error) {
+	allowed, currentAttempt, err := e.store.TryAttempt(ctx, key, maxAttempts, e.cooldown)
 	if err != nil {
-		return false, fmt.Errorf("failed to get attempt count: %w", err)
+		return false, fmt.Errorf("failed to check/record attempt: %w", err)
 	}
-	return count < maxAttempts, nil
-}
 
-// RecordAttempt increments the attempt counter and returns the new count.
-func (e *Engine) RecordAttempt(ctx context.Context, key string) (int, error) {
-	return e.store.Increment(ctx, key, e.cooldown)
-}
-
-// Execute records the attempt and calls the provided retry function.
-func (e *Engine) Execute(ctx context.Context, key string, retryFn RetryFunc, owner, repo string, runID int64, strategy string) error {
-	attempt, err := e.RecordAttempt(ctx, key)
-	if err != nil {
-		return fmt.Errorf("failed to record attempt: %w", err)
+	if !allowed {
+		return false, nil
 	}
-	log.Printf("[retry] executing %s for %s run %d (attempt %d)", strategy, key, runID, attempt)
-	return retryFn(ctx, owner, repo, runID, strategy)
+
+	log.Printf("[retry] executing %s for %s run %d (attempt %d)", strategy, key, runID, currentAttempt)
+	
+	if err := retryFn(ctx, owner, repo, runID, strategy); err != nil {
+		return true, fmt.Errorf("retry execution failed: %w", err)
+	}
+	
+	return true, nil
 }
 
 // CurrentAttempts returns the current attempt count for a key.

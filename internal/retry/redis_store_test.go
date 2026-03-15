@@ -13,13 +13,21 @@ func newTestRedisStore(t *testing.T) (*RedisStore, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	
+	t.Cleanup(func() {
+		rdb.Close()
+		mr.Close()
+	})
+
 	return NewRedisStore(rdb), mr
 }
 
-func TestRedisStore_IncrementAndGet(t *testing.T) {
+func TestRedisStore_TryAttemptAndGet(t *testing.T) {
 	store, _ := newTestRedisStore(t)
 	ctx := context.Background()
 	key := "test:counter"
+	maxAttempts := 3
+	ttl := 1 * time.Hour
 
 	// Initially zero.
 	val, err := store.Get(ctx, key)
@@ -30,31 +38,49 @@ func TestRedisStore_IncrementAndGet(t *testing.T) {
 		t.Errorf("expected 0, got %d", val)
 	}
 
-	// Increment to 1.
-	newVal, err := store.Increment(ctx, key, 1*time.Hour)
+	// Attempt 1.
+	allowed, newVal, err := store.TryAttempt(ctx, key, maxAttempts, ttl)
 	if err != nil {
-		t.Fatalf("Increment: unexpected error: %v", err)
+		t.Fatalf("TryAttempt: unexpected error: %v", err)
 	}
-	if newVal != 1 {
-		t.Errorf("expected 1, got %d", newVal)
+	if !allowed || newVal != 1 {
+		t.Errorf("expected allowed=true, val=1, got %v, %d", allowed, newVal)
 	}
 
-	// Increment to 2.
-	newVal, err = store.Increment(ctx, key, 1*time.Hour)
+	// Attempt 2.
+	allowed, newVal, err = store.TryAttempt(ctx, key, maxAttempts, ttl)
 	if err != nil {
-		t.Fatalf("Increment: unexpected error: %v", err)
+		t.Fatalf("TryAttempt: unexpected error: %v", err)
 	}
-	if newVal != 2 {
-		t.Errorf("expected 2, got %d", newVal)
+	if !allowed || newVal != 2 {
+		t.Errorf("expected allowed=true, val=2, got %v, %d", allowed, newVal)
 	}
 
-	// Get should reflect 2.
+	// Attempt 3.
+	allowed, newVal, err = store.TryAttempt(ctx, key, maxAttempts, ttl)
+	if err != nil {
+		t.Fatalf("TryAttempt: unexpected error: %v", err)
+	}
+	if !allowed || newVal != 3 {
+		t.Errorf("expected allowed=true, val=3, got %v, %d", allowed, newVal)
+	}
+
+	// Attempt 4 (Exhausted).
+	allowed, newVal, err = store.TryAttempt(ctx, key, maxAttempts, ttl)
+	if err != nil {
+		t.Fatalf("TryAttempt: unexpected error: %v", err)
+	}
+	if allowed || newVal != 3 {
+		t.Errorf("expected allowed=false, val=3, got %v, %d", allowed, newVal)
+	}
+
+	// Get should reflect 3.
 	val, err = store.Get(ctx, key)
 	if err != nil {
 		t.Fatalf("Get: unexpected error: %v", err)
 	}
-	if val != 2 {
-		t.Errorf("expected 2, got %d", val)
+	if val != 3 {
+		t.Errorf("expected 3, got %d", val)
 	}
 }
 
@@ -62,11 +88,13 @@ func TestRedisStore_TTLExpiry(t *testing.T) {
 	store, mr := newTestRedisStore(t)
 	ctx := context.Background()
 	key := "test:expiry"
+	maxAttempts := 3
+	ttl := 10 * time.Second
 
-	// Increment with a short TTL.
-	_, err := store.Increment(ctx, key, 10*time.Second)
+	// First attempt with a short TTL.
+	_, _, err := store.TryAttempt(ctx, key, maxAttempts, ttl)
 	if err != nil {
-		t.Fatalf("Increment: unexpected error: %v", err)
+		t.Fatalf("TryAttempt: unexpected error: %v", err)
 	}
 
 	// Key should exist.
@@ -95,17 +123,17 @@ func TestRedisStore_IndependentKeys(t *testing.T) {
 	store, _ := newTestRedisStore(t)
 	ctx := context.Background()
 
-	_, err := store.Increment(ctx, "key:a", 1*time.Hour)
+	_, _, err := store.TryAttempt(ctx, "key:a", 3, 1*time.Hour)
 	if err != nil {
-		t.Fatalf("Increment key:a: %v", err)
+		t.Fatalf("TryAttempt key:a: %v", err)
 	}
-	_, err = store.Increment(ctx, "key:a", 1*time.Hour)
+	_, _, err = store.TryAttempt(ctx, "key:a", 3, 1*time.Hour)
 	if err != nil {
-		t.Fatalf("Increment key:a: %v", err)
+		t.Fatalf("TryAttempt key:a: %v", err)
 	}
-	_, err = store.Increment(ctx, "key:b", 1*time.Hour)
+	_, _, err = store.TryAttempt(ctx, "key:b", 3, 1*time.Hour)
 	if err != nil {
-		t.Fatalf("Increment key:b: %v", err)
+		t.Fatalf("TryAttempt key:b: %v", err)
 	}
 
 	valA, err := store.Get(ctx, "key:a")

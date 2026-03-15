@@ -141,17 +141,6 @@ func (h *Handler) processFailedRun(event workflowRunEvent) {
 	// Build a stable key for retry tracking (survives across re-runs).
 	attemptKey := retry.AttemptKey(owner, repo, event.WorkflowRun.Name, event.WorkflowRun.HeadBranch)
 
-	// Check retry budget.
-	allowed, err := h.retryEngine.ShouldRetry(ctx, attemptKey, cfg.Retry.MaxAttempts)
-	if err != nil {
-		log.Printf("[webhook] error checking retry budget: %v", err)
-		return
-	}
-	if !allowed {
-		log.Printf("[webhook] retry budget exhausted for %s (max %d)", attemptKey, cfg.Retry.MaxAttempts)
-		return
-	}
-
 	// Build the retry function using the per-installation client.
 	retryFn := func(ctx context.Context, owner, repo string, runID int64, strategy string) error {
 		switch strategy {
@@ -164,9 +153,19 @@ func (h *Handler) processFailedRun(event workflowRunEvent) {
 		}
 	}
 
-	// Execute retry.
-	if err := h.retryEngine.Execute(ctx, attemptKey, retryFn, owner, repo, event.WorkflowRun.ID, match.Strategy); err != nil {
-		log.Printf("[webhook] retry failed: %v", err)
+	// Try checking budget and executing the retry atomically.
+	allowed, err := h.retryEngine.TryExecute(
+		ctx, attemptKey, cfg.Retry.MaxAttempts,
+		retryFn, owner, repo, event.WorkflowRun.ID, match.Strategy,
+	)
+	if err != nil {
+		log.Printf("[webhook] error during retry execution for %s: %v", attemptKey, err)
+		// If it was allowed but failed during execution, we don't return early here
+		// since we want to print success if it succeeded, but we just return to stop.
+		return
+	}
+	if !allowed {
+		log.Printf("[webhook] retry budget exhausted for %s (max %d)", attemptKey, cfg.Retry.MaxAttempts)
 		return
 	}
 

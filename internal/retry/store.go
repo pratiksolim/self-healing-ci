@@ -1,4 +1,3 @@
-// Package retry provides retry decision logic with budget enforcement.
 package retry
 
 import (
@@ -10,41 +9,72 @@ import (
 // Store abstracts counter persistence for retry tracking.
 // Implementations must be safe for concurrent use.
 type Store interface {
+	// TryAttempt atomically checks if the retry budget allows another attempt, and if so,
+	// increments the counter. It returns true if the attempt is allowed, along with the
+	// new attempt count. The ttl is used to set an auto-expiry on the counter so it doesn't
+	// grow unbounded.
+	TryAttempt(ctx context.Context, key string, maxAttempts int, ttl time.Duration) (bool, int, error)
+
 	// Get returns the current attempt count for a key. Returns 0 if not found.
 	Get(ctx context.Context, key string) (int, error)
-
-	// Increment atomically increments the counter and returns the new value.
-	// On the first increment it sets a TTL for auto-expiry so stale keys
-	// are cleaned up automatically.
-	Increment(ctx context.Context, key string, ttl time.Duration) (int, error)
 }
 
 // MemoryStore is an in-memory Store backed by a map. Useful for tests and
-// local development. Counters never expire.
+// local development. It supports TTL via periodic or access-time pruning.
 type MemoryStore struct {
 	mu       sync.Mutex
-	attempts map[string]int
+	attempts map[string]storeEntry
+}
+
+type storeEntry struct {
+	count     int
+	expiresAt time.Time
 }
 
 // NewMemoryStore creates a new in-memory store.
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		attempts: make(map[string]int),
+		attempts: make(map[string]storeEntry),
 	}
+}
+
+// TryAttempt atomically checks the budget, increments, and sets TTL.
+func (m *MemoryStore) TryAttempt(_ context.Context, key string, maxAttempts int, ttl time.Duration) (bool, int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	entry, exists := m.attempts[key]
+	now := time.Now()
+
+	// Handle expiry
+	if exists && !entry.expiresAt.IsZero() && now.After(entry.expiresAt) {
+		entry = storeEntry{}
+		exists = false
+	}
+
+	if entry.count >= maxAttempts {
+		return false, entry.count, nil
+	}
+
+	entry.count++
+	if !exists && ttl > 0 {
+		entry.expiresAt = now.Add(ttl)
+	}
+
+	m.attempts[key] = entry
+	return true, entry.count, nil
 }
 
 // Get returns the current attempt count for a key.
 func (m *MemoryStore) Get(_ context.Context, key string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.attempts[key], nil
-}
 
-// Increment increments the counter and returns the new value.
-// The ttl parameter is ignored for the in-memory store.
-func (m *MemoryStore) Increment(_ context.Context, key string, _ time.Duration) (int, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.attempts[key]++
-	return m.attempts[key], nil
+	entry, exists := m.attempts[key]
+	if exists && !entry.expiresAt.IsZero() && time.Now().After(entry.expiresAt) {
+		delete(m.attempts, key)
+		return 0, nil
+	}
+
+	return entry.count, nil
 }

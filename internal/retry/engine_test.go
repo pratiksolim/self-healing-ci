@@ -6,68 +6,69 @@ import (
 	"time"
 )
 
-func TestShouldRetry_WithinBudget(t *testing.T) {
+func TestTryExecute_WithinBudget(t *testing.T) {
 	engine := NewEngine(NewMemoryStore(), 1*time.Hour)
 	key := AttemptKey("owner", "repo", "ci", "main")
 	ctx := context.Background()
 
-	allowed, err := engine.ShouldRetry(ctx, key, 3)
+	called := false
+	retryFn := func(ctx context.Context, owner, repo string, runID int64, strategy string) error {
+		called = true
+		return nil
+	}
+
+	allowed, err := engine.TryExecute(ctx, key, 3, retryFn, "owner", "repo", 42, "rerun-failed-jobs")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !allowed {
-		t.Error("expected ShouldRetry to return true with 0 attempts")
+		t.Error("expected TryExecute to return true with 0 attempts")
+	}
+	if !called {
+		t.Error("expected retryFn to be called")
+	}
+
+	count, _ := engine.CurrentAttempts(ctx, key)
+	if count != 1 {
+		t.Errorf("expected 1 attempt, got %d", count)
 	}
 }
 
-func TestShouldRetry_ExhaustedBudget(t *testing.T) {
+func TestTryExecute_ExhaustedBudget(t *testing.T) {
 	engine := NewEngine(NewMemoryStore(), 1*time.Hour)
 	key := AttemptKey("owner", "repo", "ci", "main")
 	ctx := context.Background()
 
+	retryFn := func(ctx context.Context, owner, repo string, runID int64, strategy string) error {
+		return nil
+	}
+
 	// Simulate 3 attempts.
 	for i := 0; i < 3; i++ {
-		if _, err := engine.RecordAttempt(ctx, key); err != nil {
+		allowed, err := engine.TryExecute(ctx, key, 3, retryFn, "owner", "repo", 42, "rerun-failed-jobs")
+		if err != nil {
 			t.Fatalf("unexpected error recording attempt: %v", err)
+		}
+		if !allowed {
+			t.Fatalf("expected attempt %d to be allowed", i+1)
 		}
 	}
 
-	allowed, err := engine.ShouldRetry(ctx, key, 3)
+	// 4th attempt should be blocked
+	called := false
+	retryFn4 := func(ctx context.Context, owner, repo string, runID int64, strategy string) error {
+		called = true
+		return nil
+	}
+	allowed, err := engine.TryExecute(ctx, key, 3, retryFn4, "owner", "repo", 42, "rerun-failed-jobs")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if allowed {
-		t.Error("expected ShouldRetry to return false after 3 attempts with max 3")
+		t.Error("expected TryExecute to return false after 3 attempts with max 3")
 	}
-}
-
-func TestExecute_CallsRetryFunc(t *testing.T) {
-	engine := NewEngine(NewMemoryStore(), 1*time.Hour)
-	key := AttemptKey("owner", "repo", "ci", "main")
-	ctx := context.Background()
-	called := false
-
-	retryFn := func(ctx context.Context, owner, repo string, runID int64, strategy string) error {
-		called = true
-		if strategy != "rerun-failed-jobs" {
-			t.Errorf("expected strategy rerun-failed-jobs, got %s", strategy)
-		}
-		return nil
-	}
-
-	err := engine.Execute(ctx, key, retryFn, "owner", "repo", 42, "rerun-failed-jobs")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !called {
-		t.Error("retryFn was not called")
-	}
-	count, err := engine.CurrentAttempts(ctx, key)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if count != 1 {
-		t.Errorf("expected 1 attempt, got %d", count)
+	if called {
+		t.Error("expected retryFn to NOT be called on exhausted budget")
 	}
 }
 
