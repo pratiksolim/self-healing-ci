@@ -3,11 +3,7 @@
 A GitHub App that automatically retries failed GitHub Actions workflows when failures match user-configured patterns, such as network timeouts, registry rate limits, or transient connection errors.
 
 ## Demo
-<video src="./assets/demo.mp4" 
-       muted 
-       autoplay 
-       loop 
-       style="max-width: 100%;">
+<video src="https://github.com/user-attachments/assets/c289dafc-5437-437c-b999-24c78c27bb35" controls muted autoplay loop preload="auto" style="max-width: 100%;">
 </video>
 
 ## 1. How It Works
