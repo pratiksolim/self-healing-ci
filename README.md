@@ -11,7 +11,7 @@ CI pipelines fail all the time for reasons that have nothing to do with your cod
 
 I built Self-Healing CI to automate that away. It pulls the actual logs of failed jobs, scans them against user-defined regex patterns, and if a match is found within the retry budget, re-triggers the run automatically. No developer intervention needed.
 
-## 1. How It Works
+## How It Works
 
 1. A repository installs the GitHub App.
 2. When a workflow run **fails**, GitHub sends a `workflow_run` webhook to this service.
@@ -20,7 +20,7 @@ I built Self-Healing CI to automate that away. It pulls the actual logs of faile
 5. If a pattern matches and the retry budget allows, the failed jobs (or full workflow) are automatically re-triggered.
 6. If the maximum number of retry attempts is exhausted within the cooldown window, a notification is dispatched to a configured Slack channel.
 
-## 2. Tech Stack
+## Tech Stack
 
 - **Language:** Go 1.25+
 - **Build System:** Bazel (with bzlmod) / standard `go` toolchain
@@ -28,7 +28,7 @@ I built Self-Healing CI to automate that away. It pulls the actual logs of faile
 - **Containerization:** Docker & Docker Compose
 - **Integrations:** GitHub Apps API, Slack `chat.postMessage` API
 
-## 3. Design Decisions
+## Design Decisions
 
 **Redis for retry budget tracking**
 
@@ -38,14 +38,14 @@ Each repository+workflow combination gets its own retry counter in Redis with a 
 
 Each repository owns its own `.self-healing-ci.yaml` file. This keeps configuration close to the code it applies to, lets teams define their own retry patterns and budgets, and avoids a single centralised config that becomes a bottleneck or a source of accidental blast radius.
 
-## 4. Why Bazel?
+## Why Bazel?
 For a project this size, Bazel is admittedly overkill. I included it as a first-class build system alongside the standard go toolchain for a few specific reasons:
 
 - Hermetic & Reproducible Builds: Bazel ensures that builds are identical regardless of the machine they run on.
 - Aggressive Caching: Bazel caches test results and build artifacts. If you only change the webhook package, Bazel knows it doesn't need to re-run the analyzer tests, drastically speeding up local development.
 - Strict Dependency Graph: Bazel's BUILD.bazel files enforce strict visibility and dependency boundaries between internal Go packages, preventing accidental cyclic dependencies and keeping the architecture clean.
 
-## 5. Example Configuration
+## Example Configuration
 
 Add a `.self-healing-ci.yaml` to the root of any repository where the app is installed to configure custom retry patterns:
 
@@ -74,7 +74,7 @@ retryable_patterns:
     strategy: "rerun-failed-jobs"
 ```
 
-## 6. Local Setup Guide
+## Local Setup Guide
 
 ### Prerequisites
 
@@ -122,7 +122,7 @@ go run ./cmd/server
 bazel run //cmd/server:server
 ```
 
-## 7. Guide to Fork and Deploy for Your Organization
+## Guide to Fork and Deploy for Your Organization
 
 1. **Fork the Repository**: Fork this repository into your organization's GitHub account.
 2. **Setup the GitHub App**:
@@ -144,7 +144,7 @@ bazel run //cmd/server:server
    - Provision a production Redis instance (e.g., AWS ElastiCache).
    - Safely inject the `.env` variables via your infrastructure's secret manager, ensuring the GitHub private key is securely mounted or passed down.
 
-## 8. Project Structure
+## Project Structure
 
 ```text
 ├── cmd/server/           # Server entry point and configuration loading
